@@ -1,0 +1,25 @@
+#!/bin/sh
+set -e
+
+SELF=$0
+while [ -L "$SELF" ]; do
+    LINK=$(readlink "$SELF")
+    case "$LINK" in
+        /*) SELF=$LINK ;;
+        *)  SELF=$(dirname -- "$SELF")/$LINK ;;
+    esac
+done
+ROOT=$(CDPATH= cd -- "$(dirname -- "$SELF")/.." && pwd -P)
+BIN="$ROOT/build/ParrotPane.app/Contents/MacOS/ParrotPane"
+
+if [ ! -x "$BIN" ]; then
+    echo "parrotpane: not built. Run 'make' in $ROOT" >&2
+    exit 1
+fi
+
+if [ "$1" = "open" ] && [ -n "$2" ]; then
+    "$BIN" wait >/dev/null 2>&1 &
+    exec terminal-browser open "$2" --no-toolbar --no-frame --no-merge
+fi
+
+exec "$BIN" "$@"

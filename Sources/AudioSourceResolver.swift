@@ -1,33 +1,43 @@
 import Cocoa
 import CoreAudio
+import Darwin
 
 /// Resolves a user-supplied audio source into the CoreAudio process objects to tap.
-/// Electron and Chromium emit sound from helper processes, so the whole process subtree
-/// of the owning application is included rather than the application process alone.
+/// Matching is done on each process's executable path rather than a bundle identifier,
+/// because Electron and Chromium emit sound from helper processes whose bundle identity
+/// belongs to the framework rather than the application.
 enum AudioSourceResolver {
-    static let defaultBundleIdentifier = "dev.zenbu.terminal-browser"
+    static let defaultMatch = "terminal-browser"
 
     static func processObjectIDs(for reference: String?) throws -> [AudioProcess] {
-        guard let rootPID = try resolveRootPID(reference) else { return [] }
-        return try AudioProcesses.emittingAudio(under: rootPID)
+        let needle = (reference ?? defaultMatch).lowercased()
+
+        if let pid = pid_t(needle) {
+            return try AudioProcesses.emittingAudio(under: pid)
+        }
+
+        let candidates = try AudioProcesses.all().filter { process in
+            if process.bundleID.lowercased().contains(needle) { return true }
+            guard let path = executablePath(of: process.pid) else { return false }
+            return path.lowercased().contains(needle)
+        }
+        if !candidates.isEmpty { return candidates }
+
+        guard let pid = runningApplicationPID(matching: needle) else { return [] }
+        return try AudioProcesses.emittingAudio(under: pid)
     }
 
-    private static func resolveRootPID(_ reference: String?) throws -> pid_t? {
-        guard let reference else { return runningPID(bundleIdentifier: defaultBundleIdentifier) }
-        if let pid = pid_t(reference) { return pid }
-        if let pid = runningPID(bundleIdentifier: reference) { return pid }
-        let needle = reference.lowercased()
-        let match = NSWorkspace.shared.runningApplications.first {
+    private static func executablePath(of pid: pid_t) -> String? {
+        var buffer = [CChar](repeating: 0, count: 4096)
+        let length = proc_pidpath(pid, &buffer, UInt32(buffer.count))
+        guard length > 0 else { return nil }
+        return String(cString: buffer)
+    }
+
+    private static func runningApplicationPID(matching needle: String) -> pid_t? {
+        NSWorkspace.shared.runningApplications.first {
             ($0.localizedName?.lowercased().contains(needle) ?? false)
                 || ($0.bundleIdentifier?.lowercased().contains(needle) ?? false)
-        }
-        return match?.processIdentifier
-    }
-
-    private static func runningPID(bundleIdentifier: String) -> pid_t? {
-        NSRunningApplication
-            .runningApplications(withBundleIdentifier: bundleIdentifier)
-            .first?
-            .processIdentifier
+        }?.processIdentifier
     }
 }

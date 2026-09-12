@@ -1,0 +1,129 @@
+diff --git a/browser/src/main.tsx b/browser/src/main.tsx
+index 5833333..70769fc 100644
+--- a/browser/src/main.tsx
++++ b/browser/src/main.tsx
+@@ -2,6 +2,7 @@ import fs from "node:fs";
+ import net from "node:net";
+ import path from "node:path";
+ 
++import * as electron from "electron";
+ import { app, screen } from "electron";
+ 
+ import { runDaemon } from "./daemon";
+@@ -25,6 +26,25 @@ app.setName("terminal-browser");
+ claimProfile();
+ 
+ 
++type ContentDecryptionComponents = {
++  whenReady(): Promise<void>;
++  status(): unknown;
++};
++
++async function loadContentDecryptionModule(): Promise<void> {
++  const components = (electron as unknown as { components?: ContentDecryptionComponents }).components;
++  if (!components) {
++    appLog("info", "widevine", "this electron build has no content decryption module");
++    return;
++  }
++  try {
++    await components.whenReady();
++    appLog("info", "widevine", `components ready: ${JSON.stringify(components.status())}`);
++  } catch (error) {
++    appLog("info", "widevine", `components failed: ${String(error)}`);
++  }
++}
++
+ function freePort(): Promise<number> {
+   return new Promise((resolve, reject) => {
+     const probe = net.createServer();
+@@ -44,6 +64,7 @@ void (async () => {
+   const cdpPort = await freePort().catch(() => null);
+   if (cdpPort != null) app.commandLine.appendSwitch("remote-debugging-port", String(cdpPort));
+   await app.whenReady();
++  await loadContentDecryptionModule();
+   appLog(
+     "info",
+     "scale",
+diff --git a/browser/src/page/frame-rate.ts b/browser/src/page/frame-rate.ts
+index 3d3c579..0dac3db 100644
+--- a/browser/src/page/frame-rate.ts
++++ b/browser/src/page/frame-rate.ts
+@@ -1,11 +1,18 @@
+ import { screen } from "electron";
+ 
++import { usesSharedTextures } from "./offscreen";
++
++
++const BITMAP_FRAME_RATE = 30;
+ 
+ export function frameRate() {
+   const configured = Number(process.env.TERMINAL_BROWSER_FPS);
+   if (Number.isFinite(configured) && configured > 0) {
+     return Math.max(1, Math.min(240, Math.round(configured)));
+   }
++  if (process.platform === "darwin" && !usesSharedTextures()) {
++    return BITMAP_FRAME_RATE;
++  }
+   const fastest = Math.max(
+     0,
+     ...screen.getAllDisplays().map((display) => display.displayFrequency),
+diff --git a/browser/src/page/offscreen.ts b/browser/src/page/offscreen.ts
+index b17c5f7..5e39c5f 100644
+--- a/browser/src/page/offscreen.ts
++++ b/browser/src/page/offscreen.ts
+@@ -2,13 +2,21 @@ import { appLog } from "pixel-react";
+ 
+ 
+ const SHM_FRAMES = process.platform === "linux" && process.env.TERMINAL_BROWSER_SHM !== "0";
++const SHARED_TEXTURES = process.platform === "darwin" && process.env.TERMINAL_BROWSER_BITMAP !== "1";
++
++export function usesSharedTextures(): boolean {
++  return SHARED_TEXTURES;
++}
+ 
+ export function offscreenPreferences(
+   deviceScaleFactor: number,
+ ): Electron.WebPreferences["offscreen"] {
+-  if (process.platform === "darwin") {
++  if (SHARED_TEXTURES) {
+     return { useSharedTexture: true, sharedTexturePixelFormat: "argb", deviceScaleFactor };
+   }
++  if (process.platform === "darwin") {
++    return { useSharedTexture: false, deviceScaleFactor };
++  }
+   return {
+     useSharedTexture: false,
+     useSharedMemory: SHM_FRAMES,
+@@ -17,9 +25,15 @@ export function offscreenPreferences(
+ }
+ 
+ export function initOffscreenMode(sharedTextures: boolean): void {
+-  if (process.platform === "darwin" && !sharedTextures) {
++  if (SHARED_TEXTURES && !sharedTextures) {
+     throw new Error("wrong electron build installed");
+   }
+-  const mode = process.platform === "darwin" ? "shared-texture" : SHM_FRAMES ? "shm" : "bitmap";
++  const mode = SHARED_TEXTURES
++    ? "shared-texture"
++    : process.platform === "darwin"
++      ? "bitmap"
++      : SHM_FRAMES
++        ? "shm"
++        : "bitmap";
+   appLog("info", "texture", `offscreen mode: ${mode}`);
+ }
+diff --git a/scripts/release.sh b/scripts/release.sh
+index b32d9c5..caa57c7 100755
+--- a/scripts/release.sh
++++ b/scripts/release.sh
+@@ -50,8 +50,9 @@ mkdir -p "$STAGE/assets/react-grab"
+ cp "$ROOT/assets/react-grab/"* "$STAGE/assets/react-grab/"
+ 
+ ELECTRON_DIST="$(node -e 'const p=require("path");console.log(p.join(p.dirname(require.resolve("electron/package.json",{paths:[process.argv[1]]})),"dist"))' "$ROOT/browser")"
+-if [ ! -f "$ELECTRON_DIST/.zenbu-electron-sha256" ]; then
++if [ ! -f "$ELECTRON_DIST/.zenbu-electron-sha256" ] && [ "${TERMINAL_BROWSER_ALLOW_FOREIGN_ELECTRON:-0}" != "1" ]; then
+   echo "refusing to build: installed electron does not come from https://github.com/zenbu-labs/electron-releases" >&2
++  echo "set TERMINAL_BROWSER_ALLOW_FOREIGN_ELECTRON=1 to build against a deliberately swapped electron" >&2
+   exit 1
+ fi
+ if [ -n "$DARWIN_ARCH" ]; then

@@ -18,10 +18,11 @@ final class AudioRelay {
         else { throw ParrotPaneError.unsupportedAudioFormat }
 
         renderFormat = format
-        prerollFrames = Int(format.sampleRate * 0.04)
+        prerollFrames = Int(format.sampleRate * 0.02)
         ring = AudioRingBuffer(
             channelCount: Int(format.channelCount),
-            capacity: Int(format.sampleRate * 2))
+            capacity: Int(format.sampleRate * 0.5),
+            maximumFill: Int(format.sampleRate * 0.06))
     }
 
     func start() throws {

@@ -5,15 +5,17 @@ import Foundation
 final class AudioRingBuffer {
     private let channelCount: Int
     private let capacity: Int
+    private let maximumFill: Int
     private var planes: [[Float]]
     private var writeIndex = 0
     private var readIndex = 0
     private var filled = 0
     private let lock = NSLock()
 
-    init(channelCount: Int, capacity: Int) {
+    init(channelCount: Int, capacity: Int, maximumFill: Int) {
         self.channelCount = max(channelCount, 1)
         self.capacity = capacity
+        self.maximumFill = min(maximumFill, capacity)
         self.planes = Array(repeating: [Float](repeating: 0, count: capacity), count: self.channelCount)
     }
 
@@ -56,7 +58,12 @@ final class AudioRingBuffer {
 
         writeIndex = (writeIndex + frameCount) % capacity
         filled = min(filled + frameCount, capacity)
-        if filled == capacity { readIndex = writeIndex }
+
+        if filled > maximumFill {
+            let overflow = filled - maximumFill
+            readIndex = (readIndex + overflow) % capacity
+            filled = maximumFill
+        }
     }
 
     func read(into bufferList: UnsafeMutableAudioBufferListPointer, frameCount: Int) {

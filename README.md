@@ -1,8 +1,12 @@
-<img src="assets/logo/parrotpane.png" width="120" align="right" alt="parrotpane">
+<p align="center">
+  <img src="assets/logo/parrotpane.png" width="150" alt="parrotpane">
+</p>
 
-# parrotpane
+<h1 align="center">parrotpane</h1>
 
+<p align="center">
 Share one Ghostty pane in Discord, Zoom or Meet, with that pane's audio.
+</p>
 
 Screen sharing apps let you pick a window or a whole screen, never a region. Terminal
 browsers make that worse: they render offscreen and send frames to the terminal, so their

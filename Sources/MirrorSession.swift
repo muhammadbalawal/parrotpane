@@ -5,7 +5,7 @@ import ScreenCaptureKit
 final class MirrorSession {
     struct Options {
         var frameRate: Int
-        var audioProcesses: [AudioProcess]
+        var audioReference: String?
         var mutesSource: Bool
     }
 
@@ -17,6 +17,8 @@ final class MirrorSession {
     private var tap: ProcessTap?
     private var relay: AudioRelay?
     private var follow: Timer?
+    private var audioWatch: Timer?
+    private var tappedObjectIDs: [AudioObjectID] = []
     private var lastSourceSize = CGSize.zero
     private var lastCrop = CGRect.zero
 
@@ -45,13 +47,17 @@ final class MirrorSession {
         try await capture.start()
         self.capture = capture
 
-        try startAudio()
-        await MainActor.run { startFollowing() }
+        await MainActor.run {
+            refreshAudio()
+            startFollowing()
+        }
     }
 
     func stop() {
         follow?.invalidate()
         follow = nil
+        audioWatch?.invalidate()
+        audioWatch = nil
         tap?.stop()
         relay?.stop()
         let capture = self.capture
@@ -59,21 +65,43 @@ final class MirrorSession {
         Task { await capture?.stop() }
     }
 
-    private func startAudio() throws {
-        guard !options.audioProcesses.isEmpty else { return }
-        let tap = try ProcessTap(configuration: .init(
-            processObjectIDs: options.audioProcesses.map(\.objectID),
-            mutesSource: options.mutesSource))
-        let relay = try AudioRelay(tapFormat: tap.format)
-        try relay.start()
-        try tap.start { [weak relay] bufferList in relay?.receive(bufferList) }
-        self.tap = tap
-        self.relay = relay
+    /// Chromium spawns its audio helper only once something plays, and recycles it when idle,
+    /// so the set of processes worth tapping is discovered over time rather than at launch.
+    private func refreshAudio() {
+        guard let processes = try? AudioSourceResolver.processObjectIDs(for: options.audioReference),
+              !processes.isEmpty else { return }
+
+        let identifiers = processes.map(\.objectID).sorted()
+        guard identifiers != tappedObjectIDs else { return }
+
+        tap?.stop()
+        relay?.stop()
+        tap = nil
+        relay = nil
+
+        do {
+            let tap = try ProcessTap(configuration: .init(
+                processObjectIDs: identifiers,
+                mutesSource: options.mutesSource))
+            let relay = try AudioRelay(tapFormat: tap.format)
+            try relay.start()
+            try tap.start { [weak relay] bufferList in relay?.receive(bufferList) }
+            self.tap = tap
+            self.relay = relay
+            tappedObjectIDs = identifiers
+            let pids = processes.map { String($0.pid) }.joined(separator: ", ")
+            FileHandle.standardError.write("audio: relaying \(pids)\n".data(using: .utf8)!)
+        } catch {
+            FileHandle.standardError.write("audio: \(error.localizedDescription)\n".data(using: .utf8)!)
+        }
     }
 
     private func startFollowing() {
         follow = Timer.scheduledTimer(withTimeInterval: 0.25, repeats: true) { [weak self] _ in
             self?.refreshGeometry()
+        }
+        audioWatch = Timer.scheduledTimer(withTimeInterval: 2, repeats: true) { [weak self] _ in
+            self?.refreshAudio()
         }
     }
 

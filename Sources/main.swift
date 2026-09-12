@@ -39,17 +39,12 @@ private func waitForBrowserPane(timeout: TimeInterval) throws -> TerminalPane {
 }
 
 private func share(_ pane: TerminalPane) throws {
-    let audioProcesses = (try? AudioSourceResolver.processObjectIDs(for: nil)) ?? []
-    if audioProcesses.isEmpty {
-        FileHandle.standardError.write("no audio source found; mirroring video only\n".data(using: .utf8)!)
-    }
-
     print("mirroring \(pane.path) — \(Int(pane.frame.width))x\(Int(pane.frame.height))")
     print("share the \"ParrotPane\" window in your meeting app")
 
     let session = MirrorSession(pane: pane, options: .init(
         frameRate: captureFrameRate,
-        audioProcesses: audioProcesses,
+        audioReference: nil,
         mutesSource: true))
 
     Task {
